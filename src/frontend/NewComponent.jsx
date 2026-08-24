@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import Fuse from "fuse.js";
 
 import {
   Alert,
@@ -19,6 +20,209 @@ import {
   Typography,
 } from "@mui/material";
 
+
+function normalizeQuery(value = "") {
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[?!.,;:()[\]{}"'`]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getQueryFromProps(props) {
+  const candidates = [
+    props?.query,
+    props?.searchQuery,
+    props?.userQuery,
+    props?.searchData?.query,
+    props?.searchData?.searchQuery,
+    props?.searchData?.originalQuery,
+    props?.searchData?.text,
+  ];
+
+  return candidates.find(
+    (value) => typeof value === "string" && value.trim()
+  ) || "";
+}
+
+const INTENT_TERMS = [
+  {
+    intent: "tourism",
+    terms: [
+      "tourist", "tourism", "attraction", "attractions",
+      "spot", "spots", "sight", "sights", "place", "places",
+      "visit", "visits", "visiting", "see", "sightseeing",
+      "things to do", "must see", "must visit",
+      "ghumne", "ghoomne", "ghumna", "jagah", "jaga",
+      "ghumne ki jagah", "ghoomne ki jagah",
+      "ghumne ke places", "ghoomne ke places",
+      "dekhne layak", "dekhne layak jagah",
+      "kya dekhein", "kya dekhe", "kya ghoomein",
+      "kya ghoome", "darshaniya sthal", "paryatan sthal",
+    ],
+  },
+  {
+    intent: "landmark",
+    terms: [
+      "landmark", "landmarks", "famous landmark",
+      "famous landmarks",
+    ],
+  },
+  {
+    intent: "historical",
+    terms: [
+      "historical", "historic", "history",
+      "historical place", "historical places",
+      "historic place", "historic places",
+      "historical site", "historical sites",
+      "historic site", "historic sites",
+      "purana", "purane", "purani", "itihaas",
+      "aitihasik", "aitihasik jagah", "aitihasik sthal",
+    ],
+  },
+  {
+    intent: "museum",
+    terms: ["museum", "museums", "musuem", "musems"],
+  },
+  {
+    intent: "monument",
+    terms: ["monument", "monuments", "monumant"],
+  },
+  {
+    intent: "viewpoint",
+    terms: [
+      "viewpoint", "viewpoints", "scenic view",
+      "scenic views", "view point",
+    ],
+  },
+];
+
+const intentFuse = new Fuse(
+  INTENT_TERMS.flatMap((group) =>
+    group.terms.map((term) => ({
+      term,
+      intent: group.intent,
+    }))
+  ),
+  {
+    keys: ["term"],
+    threshold: 0.38,
+    distance: 80,
+    ignoreLocation: true,
+    minMatchCharLength: 3,
+  }
+);
+
+function detectTourismIntent(query) {
+  const normalized = normalizeQuery(query);
+
+  if (!normalized) {
+    return {
+      tourism: true,
+      intents: ["tourism"],
+      matchedTerms: [],
+    };
+  }
+
+  const directMatches = INTENT_TERMS.filter((group) =>
+    group.terms.some((term) =>
+      normalized.includes(normalizeQuery(term))
+    )
+  ).map((group) => group.intent);
+
+  const words = normalized.split(" ").filter(Boolean);
+
+  const fuzzyMatches = words.flatMap((word) =>
+    intentFuse.search(word, { limit: 3 }).map(
+      (result) => result.item
+    )
+  );
+
+  const intents = [
+    ...new Set([
+      ...directMatches,
+      ...fuzzyMatches.map((item) => item.intent),
+    ]),
+  ];
+
+  return {
+    tourism:
+      intents.length > 0 ||
+      /\b(visit|see|explore|places?|jagah|ghum)\b/.test(
+        normalized
+      ),
+    intents:
+      intents.length > 0 ? intents : ["tourism"],
+    matchedTerms: fuzzyMatches.map(
+      (item) => item.term
+    ),
+  };
+}
+
+function scorePlaceForIntent(place, intents) {
+  if (!intents.length || intents.includes("tourism")) {
+    return 0;
+  }
+
+  const text = [
+    place.name,
+    place.category,
+    ...(place.categories || []),
+    place.description,
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  let score = 0;
+
+  const categoryTerms = {
+    landmark: [
+      "landmark",
+      "monument",
+      "memorial",
+      "historic",
+    ],
+    historical: [
+      "historic",
+      "historical",
+      "heritage",
+      "archaeological",
+      "monument",
+      "memorial",
+      "castle",
+      "palace",
+      "ruins",
+    ],
+    museum: [
+      "museum",
+      "gallery",
+    ],
+    monument: [
+      "monument",
+      "memorial",
+      "statue",
+    ],
+    viewpoint: [
+      "viewpoint",
+      "observation",
+      "panorama",
+      "scenic",
+    ],
+  };
+
+  for (const intent of intents) {
+    for (const term of categoryTerms[intent] || []) {
+      if (text.includes(term)) {
+        score += 10;
+      }
+    }
+  }
+
+  return score;
+}
+
+
 function NewComponent(props) {
   const [places, setPlaces] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -34,6 +238,11 @@ function NewComponent(props) {
   const componentLoadedRef = useRef(false);
 
   const searchDataKey = JSON.stringify(props?.searchData ?? {});
+  const query = getQueryFromProps(props);
+  const detectedIntent = useMemo(
+    () => detectTourismIntent(query),
+    [query]
+  );
 
   const signalComponentLoaded = () => {
     if (componentLoadedRef.current) return;
@@ -425,12 +634,33 @@ function NewComponent(props) {
 
         if (cancelled) return;
 
+        const rankedAttractions = attractions
+          .map((place, index) => ({
+            place,
+            score: scorePlaceForIntent(
+              place,
+              detectedIntent.intents
+            ),
+            index,
+          }))
+          .sort(
+            (a, b) =>
+              b.score - a.score ||
+              a.index - b.index
+          )
+          .map((item) => item.place);
+
         console.log(
-          "NORMALIZED ATTRACTIONS:",
-          attractions
+          "DETECTED TOURISM INTENT:",
+          detectedIntent
         );
 
-        setPlaces(attractions);
+        console.log(
+          "NORMALIZED ATTRACTIONS:",
+          rankedAttractions
+        );
+
+        setPlaces(rankedAttractions);
         setError("");
         setLoading(false);
       } catch (err) {
@@ -461,7 +691,7 @@ function NewComponent(props) {
     return () => {
       cancelled = true;
     };
-  }, [searchDataKey]);
+  }, [searchDataKey, detectedIntent.intents.join("|")]);
 
   /*
    * ============================================================
@@ -815,13 +1045,31 @@ function NewComponent(props) {
             </strong>
           </Typography>
 
-          {location?.usingUserLocation && (
-            <Chip
-              label="📍 Using your current location"
-              size="small"
-              sx={{ mt: 1 }}
-            />
-          )}
+          <Stack
+            direction="row"
+            spacing={1}
+            flexWrap="wrap"
+            useFlexGap
+            sx={{ mt: 1 }}
+          >
+            {location?.usingUserLocation && (
+              <Chip
+                label="📍 Using your current location"
+                size="small"
+              />
+            )}
+
+            {detectedIntent.intents
+              .filter((intent) => intent !== "tourism")
+              .map((intent) => (
+                <Chip
+                  key={intent}
+                  label={intent}
+                  size="small"
+                  variant="outlined"
+                />
+              ))}
+          </Stack>
         </Box>
 
         {mapUrl && (

@@ -22,7 +22,8 @@
     "vite-plugin-css-injected-by-js": "^3.5.2"
   },
   "dependencies": {
-    "@hyperdart/frontend": "^2.0.0"
+    "@hyperdart/frontend": "^2.0.0",
+    "fuse.js": "^7.5.0"
   },
   "peerDependencies": {
     "@emotion/react": "^11.7.1",
