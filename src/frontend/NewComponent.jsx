@@ -1,8 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import Fuse from "fuse.js";
 
 import {
-  Alert,
   Box,
   Button,
   Card,
@@ -20,213 +18,13 @@ import {
   Typography,
 } from "@mui/material";
 
-
-function normalizeQuery(value = "") {
-  return value
-    .normalize("NFKC")
-    .toLowerCase()
-    .replace(/[?!.,;:()[\]{}"'`]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function getQueryFromProps(props) {
-  const candidates = [
-    props?.query,
-    props?.searchQuery,
-    props?.userQuery,
-    props?.searchData?.query,
-    props?.searchData?.searchQuery,
-    props?.searchData?.originalQuery,
-    props?.searchData?.text,
-  ];
-
-  return candidates.find(
-    (value) => typeof value === "string" && value.trim()
-  ) || "";
-}
-
-const INTENT_TERMS = [
-  {
-    intent: "tourism",
-    terms: [
-      "tourist", "tourism", "attraction", "attractions",
-      "spot", "spots", "sight", "sights", "place", "places",
-      "visit", "visits", "visiting", "see", "sightseeing",
-      "things to do", "must see", "must visit",
-      "ghumne", "ghoomne", "ghumna", "jagah", "jaga",
-      "ghumne ki jagah", "ghoomne ki jagah",
-      "ghumne ke places", "ghoomne ke places",
-      "dekhne layak", "dekhne layak jagah",
-      "kya dekhein", "kya dekhe", "kya ghoomein",
-      "kya ghoome", "darshaniya sthal", "paryatan sthal",
-    ],
-  },
-  {
-    intent: "landmark",
-    terms: [
-      "landmark", "landmarks", "famous landmark",
-      "famous landmarks",
-    ],
-  },
-  {
-    intent: "historical",
-    terms: [
-      "historical", "historic", "history",
-      "historical place", "historical places",
-      "historic place", "historic places",
-      "historical site", "historical sites",
-      "historic site", "historic sites",
-      "purana", "purane", "purani", "itihaas",
-      "aitihasik", "aitihasik jagah", "aitihasik sthal",
-    ],
-  },
-  {
-    intent: "museum",
-    terms: ["museum", "museums", "musuem", "musems"],
-  },
-  {
-    intent: "monument",
-    terms: ["monument", "monuments", "monumant"],
-  },
-  {
-    intent: "viewpoint",
-    terms: [
-      "viewpoint", "viewpoints", "scenic view",
-      "scenic views", "view point",
-    ],
-  },
-];
-
-const intentFuse = new Fuse(
-  INTENT_TERMS.flatMap((group) =>
-    group.terms.map((term) => ({
-      term,
-      intent: group.intent,
-    }))
-  ),
-  {
-    keys: ["term"],
-    threshold: 0.38,
-    distance: 80,
-    ignoreLocation: true,
-    minMatchCharLength: 3,
-  }
-);
-
-function detectTourismIntent(query) {
-  const normalized = normalizeQuery(query);
-
-  if (!normalized) {
-    return {
-      tourism: true,
-      intents: ["tourism"],
-      matchedTerms: [],
-    };
-  }
-
-  const directMatches = INTENT_TERMS.filter((group) =>
-    group.terms.some((term) =>
-      normalized.includes(normalizeQuery(term))
-    )
-  ).map((group) => group.intent);
-
-  const words = normalized.split(" ").filter(Boolean);
-
-  const fuzzyMatches = words.flatMap((word) =>
-    intentFuse.search(word, { limit: 3 }).map(
-      (result) => result.item
-    )
-  );
-
-  const intents = [
-    ...new Set([
-      ...directMatches,
-      ...fuzzyMatches.map((item) => item.intent),
-    ]),
-  ];
-
-  return {
-    tourism:
-      intents.length > 0 ||
-      /\b(visit|see|explore|places?|jagah|ghum)\b/.test(
-        normalized
-      ),
-    intents:
-      intents.length > 0 ? intents : ["tourism"],
-    matchedTerms: fuzzyMatches.map(
-      (item) => item.term
-    ),
-  };
-}
-
-function scorePlaceForIntent(place, intents) {
-  if (!intents.length || intents.includes("tourism")) {
-    return 0;
-  }
-
-  const text = [
-    place.name,
-    place.category,
-    ...(place.categories || []),
-    place.description,
-  ]
-    .join(" ")
-    .toLowerCase();
-
-  let score = 0;
-
-  const categoryTerms = {
-    landmark: [
-      "landmark",
-      "monument",
-      "memorial",
-      "historic",
-    ],
-    historical: [
-      "historic",
-      "historical",
-      "heritage",
-      "archaeological",
-      "monument",
-      "memorial",
-      "castle",
-      "palace",
-      "ruins",
-    ],
-    museum: [
-      "museum",
-      "gallery",
-    ],
-    monument: [
-      "monument",
-      "memorial",
-      "statue",
-    ],
-    viewpoint: [
-      "viewpoint",
-      "observation",
-      "panorama",
-      "scenic",
-    ],
-  };
-
-  for (const intent of intents) {
-    for (const term of categoryTerms[intent] || []) {
-      if (text.includes(term)) {
-        score += 10;
-      }
-    }
-  }
-
-  return score;
-}
-
-
 function NewComponent(props) {
   const [places, setPlaces] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [noticeOpen, setNoticeOpen] = useState(false);
+  const [noticeTitle, setNoticeTitle] = useState("");
+  const [noticeMessage, setNoticeMessage] = useState("");
 
   const [location, setLocation] = useState(null);
   const [focusedPlace, setFocusedPlace] = useState(null);
@@ -238,11 +36,6 @@ function NewComponent(props) {
   const componentLoadedRef = useRef(false);
 
   const searchDataKey = JSON.stringify(props?.searchData ?? {});
-  const query = getQueryFromProps(props);
-  const detectedIntent = useMemo(
-    () => detectTourismIntent(query),
-    [query]
-  );
 
   const signalComponentLoaded = () => {
     if (componentLoadedRef.current) return;
@@ -299,6 +92,66 @@ function NewComponent(props) {
         }
       );
     });
+
+
+  const detectedCategory = useMemo(() => {
+    const query = [
+      props?.searchData?.query,
+      props?.searchData?.queryTerm,
+      props?.searchData?.processedQuery,
+      props?.searchData?.genericQuery,
+      props?.searchData?.keyword,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    if (/\bmuseums?\b/.test(query)) {
+      return {
+        key: "museum",
+        geoapifyCategory: "entertainment.museum",
+        label: "Museums",
+      };
+    }
+
+    if (/\bviewpoints?\b/.test(query)) {
+      return {
+        key: "viewpoint",
+        geoapifyCategory: "tourism.attraction.viewpoint",
+        label: "Viewpoints",
+      };
+    }
+
+    if (/\bmonuments?\b/.test(query)) {
+      return {
+        key: "monument",
+        geoapifyCategory: "tourism.sights.memorial.monument",
+        label: "Monuments",
+      };
+    }
+
+    if (/\b(?:historical|historic)\s+(?:places?|sites?)\b/.test(query)) {
+      return {
+        key: "historical",
+        geoapifyCategory: "tourism.sights",
+        label: "Historical Sites",
+      };
+    }
+
+    if (/\blandmarks?\b/.test(query)) {
+      return {
+        key: "landmark",
+        geoapifyCategory: "tourism.sights",
+        label: "Landmarks",
+      };
+    }
+
+    return {
+      key: "tourism",
+      geoapifyCategory: "tourism.sights",
+      label: "Tourist Attractions",
+    };
+  }, [props?.searchData]);
 
   useEffect(() => {
     let cancelled = false;
@@ -460,11 +313,12 @@ function NewComponent(props) {
           );
         }
 
+
         const url =
-          "https://api.geoapify.com/v2/places" +
-          "?categories=tourism.sights" +
+          `https://api.geoapify.com/v2/places` +
+          `?categories=${encodeURIComponent(detectedCategory.geoapifyCategory)}` +
           `&filter=circle:${longitude},${latitude},5000` +
-          "&limit=20" +
+          `&limit=20` +
           `&apiKey=${encodeURIComponent(apiKey)}`;
 
         console.log(
@@ -606,63 +460,74 @@ function NewComponent(props) {
 
             const isRestaurant =
               categories.some((category) =>
-                category.startsWith(
-                  "catering."
-                )
+                category.startsWith("catering.")
               );
 
             const isHotel =
               categories.some((category) =>
-                category.startsWith(
-                  "accommodation."
-                )
+                category.startsWith("accommodation.")
               );
 
             const isShopping =
               categories.some((category) =>
-                category.startsWith(
-                  "commercial.shopping"
-                )
+                category.startsWith("commercial.shopping")
               );
 
-            return (
-              !isRestaurant &&
-              !isHotel &&
-              !isShopping
-            );
+            if (
+              isRestaurant ||
+              isHotel ||
+              isShopping
+            ) {
+              return false;
+            }
+
+            /*
+             * When the user explicitly requested a category,
+             * enforce it again client-side. This prevents a
+             * broad Geoapify response from leaking unrelated
+             * places into the UI.
+             */
+            if (detectedCategory.key === "museum") {
+              return categories.some((category) =>
+                category === "entertainment.museum" ||
+                category.startsWith("entertainment.museum.")
+              );
+            }
+
+            if (detectedCategory.key === "viewpoint") {
+              return categories.some((category) =>
+                category === "tourism.attraction.viewpoint" ||
+                category.startsWith("tourism.attraction.viewpoint.")
+              );
+            }
+
+            if (detectedCategory.key === "monument") {
+              return categories.some((category) =>
+                category === "tourism.sights.memorial.monument" ||
+                category.startsWith("tourism.sights.memorial.monument.")
+              );
+            }
+
+            return true;
           });
 
         if (cancelled) return;
 
-        const rankedAttractions = attractions
-          .map((place, index) => ({
-            place,
-            score: scorePlaceForIntent(
-              place,
-              detectedIntent.intents
-            ),
-            index,
-          }))
-          .sort(
-            (a, b) =>
-              b.score - a.score ||
-              a.index - b.index
-          )
-          .map((item) => item.place);
-
-        console.log(
-          "DETECTED TOURISM INTENT:",
-          detectedIntent
-        );
-
         console.log(
           "NORMALIZED ATTRACTIONS:",
-          rankedAttractions
+          attractions
         );
 
-        setPlaces(rankedAttractions);
-        setError("");
+        setPlaces(attractions);
         setLoading(false);
+
+        if (attractions.length === 0) {
+          setNoticeTitle("No attractions found");
+          setNoticeMessage(
+            `We could not find suitable ${detectedCategory.label.toLowerCase()} within 5 km of ${city}. You can explore nearby locations instead.`
+          );
+          setNoticeOpen(true);
+        }
       } catch (err) {
         if (cancelled) return;
 
@@ -671,13 +536,16 @@ function NewComponent(props) {
           err
         );
 
-        setError(
+        const message =
           err?.message ||
-            "Unable to load tourist attractions."
-        );
+          "Unable to load tourist attractions.";
 
+        setError(message);
         setPlaces([]);
         setLoading(false);
+        setNoticeTitle("Could not load attractions");
+        setNoticeMessage(message);
+        setNoticeOpen(true);
 
         /*
          * Make sure HyperDart never waits forever.
@@ -691,7 +559,7 @@ function NewComponent(props) {
     return () => {
       cancelled = true;
     };
-  }, [searchDataKey, detectedIntent.intents.join("|")]);
+  }, [searchDataKey, detectedCategory]);
 
   /*
    * ============================================================
@@ -960,7 +828,13 @@ function NewComponent(props) {
    * ============================================================
    */
 
-  if (loading && !location) {
+  /*
+   * IMPORTANT:
+   * Never show the "not found" state while an API/location
+   * request is still running. `location` may already be resolved
+   * while Geoapify is still fetching the attractions.
+   */
+  if (loading) {
     return (
       <Stack
         alignItems="center"
@@ -968,6 +842,7 @@ function NewComponent(props) {
         spacing={2}
         sx={{
           width: "100%",
+          minHeight: 240,
           py: 8,
         }}
       >
@@ -980,26 +855,51 @@ function NewComponent(props) {
     );
   }
 
-  if (error && !places.length) {
+  /*
+   * At this point loading is definitely finished.
+   * Only now may we show an error / empty-result modal.
+   */
+  if (error || !places.length) {
     return (
-      <Alert
-        severity="error"
-        sx={{ width: "100%" }}
+      <Box
+        sx={{
+          width: "100%",
+          minHeight: 240,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
       >
-        {error}
-      </Alert>
-    );
-  }
+        <Dialog
+          open={true}
+          onClose={() => setNoticeOpen(false)}
+          fullWidth
+          maxWidth="sm"
+        >
+          <DialogTitle fontWeight={800}>
+            {error
+              ? "Could not load attractions"
+              : "No attractions found"}
+          </DialogTitle>
 
-  if (!places.length) {
-    return (
-      <Alert
-        severity="info"
-        sx={{ width: "100%" }}
-      >
-        No suitable tourist attractions were
-        found within 5 km.
-      </Alert>
+          <DialogContent dividers>
+            <Typography color="text.secondary">
+              {error
+                ? error
+                : `We could not find suitable ${detectedCategory.label.toLowerCase()} within 5 km of ${location?.city || "your requested location"}. You can explore nearby locations instead.`}
+            </Typography>
+          </DialogContent>
+
+          <DialogActions>
+            <Button
+              onClick={() => setNoticeOpen(false)}
+              variant="outlined"
+            >
+              Close
+            </Button>
+          </DialogActions>
+        </Dialog>
+      </Box>
     );
   }
 
@@ -1015,7 +915,9 @@ function NewComponent(props) {
         width: "100%",
         maxWidth: "100%",
         minWidth: 0,
-        overflowX: "hidden",
+        height: "auto",
+        maxHeight: "none",
+        overflow: "visible",
         boxSizing: "border-box",
       }}
     >
@@ -1024,6 +926,9 @@ function NewComponent(props) {
         sx={{
           width: "100%",
           minWidth: 0,
+          height: "auto",
+          maxHeight: "none",
+          overflow: "visible",
         }}
       >
         <Box>
@@ -1045,31 +950,13 @@ function NewComponent(props) {
             </strong>
           </Typography>
 
-          <Stack
-            direction="row"
-            spacing={1}
-            flexWrap="wrap"
-            useFlexGap
-            sx={{ mt: 1 }}
-          >
-            {location?.usingUserLocation && (
-              <Chip
-                label="📍 Using your current location"
-                size="small"
-              />
-            )}
-
-            {detectedIntent.intents
-              .filter((intent) => intent !== "tourism")
-              .map((intent) => (
-                <Chip
-                  key={intent}
-                  label={intent}
-                  size="small"
-                  variant="outlined"
-                />
-              ))}
-          </Stack>
+          {location?.usingUserLocation && (
+            <Chip
+              label="📍 Using your current location"
+              size="small"
+              sx={{ mt: 1 }}
+            />
+          )}
         </Box>
 
         {mapUrl && (
@@ -1086,10 +973,12 @@ function NewComponent(props) {
               sx={{
                 width: "100%",
                 height: {
-                  xs: 300,
-                  sm: 380,
-                  md: 500,
+                  xs: 280,
+                  sm: 360,
+                  md: 440,
                 },
+                maxHeight: "none",
+                overflow: "hidden",
               }}
             >
               <Box
